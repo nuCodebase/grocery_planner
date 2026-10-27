@@ -11,10 +11,17 @@ from docling_core.transforms.chunker.hierarchical_chunker import (
 from docling_core.transforms.chunker.chunk_expander import PageChunkExpander, TreeChunkExpander
 from docling.chunking import HybridChunker
 from docling_core.transforms.chunker.line_chunker import LineBasedTokenChunker
+from ingestion.models import Chunk, ChunkCollection, chunks_to_dict
 
-def _save_chunks_to_json(chunk_iterator, doc: DoclingDocument, filename: str, context_flag: bool, output_dir: Path) -> None:
+def _save_chunks_to_json(
+    chunk_iterator,
+    doc: DoclingDocument,
+    filename: str,
+    context_flag: bool,
+    output_dir: Path,
+) -> ChunkCollection:
     """Internal helper to process, print, and write out chunk data uniformly."""
-    chunks_dict = {}
+    chunks: ChunkCollection = {}
     
     for i, chunk in enumerate(chunk_iterator):
         chunk_key = f"chunk_{i+1}"
@@ -42,15 +49,16 @@ def _save_chunks_to_json(chunk_iterator, doc: DoclingDocument, filename: str, co
                         page_no = getattr(prov_data, "page_no", "N/A")
         
         # Build payload structure
-        chunks_dict[chunk_key] = {
-            "text": chunk_text,
-            "metadata": {
+        chunks[chunk_key] = Chunk(
+            id=chunk_key,
+            text=chunk_text,
+            metadata={
                 "page_number": page_no,
                 "element_type": element_type,
                 "headings_path": headings,
                 "context_processed": context_flag
-            }
-        }
+            },
+        )
         
         # # Print snippet to terminal
         # print(f"\n[{chunk_key.upper()}] (Page {page_no}) | Type: {element_type} | Tree Path: {' > '.join(headings) if headings else 'Root'}")
@@ -61,11 +69,12 @@ def _save_chunks_to_json(chunk_iterator, doc: DoclingDocument, filename: str, co
     output_dir.mkdir(exist_ok=True, parents=True)
     json_output_path = output_dir / filename
     with open(json_output_path, "w", encoding="utf-8") as f:
-        json.dump(chunks_dict, f, indent=2, ensure_ascii=False)
+        json.dump(chunks_to_dict(chunks), f, indent=2, ensure_ascii=False)
 
     print(f"\n[SUCCESS] Saved chunks to JSON format -> {json_output_path}")
+    return chunks
 
-def hierarchical_chunk_tree_expander_and_print(doc: DoclingDocument, expand_context: bool = False, output_dir: Path | None = None) -> None:
+def hierarchical_chunk_tree_expander_and_print(doc: DoclingDocument, expand_context: bool = False, output_dir: Path | None = None) -> ChunkCollection:
     """
     Split the document purely by its structural and hierarchical boundaries,
     optionally expanding small fragments to their parent semantic units using 
@@ -118,9 +127,9 @@ def hierarchical_chunk_tree_expander_and_print(doc: DoclingDocument, expand_cont
     # 4. Save out only the unique semantically-expanded chunks using provided output_dir
     if output_dir is None:
         output_dir = Path.cwd() / "parsed_output"
-    _save_chunks_to_json(unique_chunks, doc, filename="hierarchical_chunks.json", context_flag=expand_context, output_dir=output_dir)
+    return _save_chunks_to_json(unique_chunks, doc, filename="hierarchical_chunks.json", context_flag=expand_context, output_dir=output_dir)
 
-def hierarchical_chunk_and_print(doc: DoclingDocument, expand_context: bool = False, output_dir: Path | None = None) -> None:
+def hierarchical_chunk_and_print(doc: DoclingDocument, expand_context: bool = False, output_dir: Path | None = None) -> ChunkCollection:
     """
     Split the document purely by its structural and hierarchical boundaries,
     print the output elements, and save the chunks to a JSON file.
@@ -177,10 +186,10 @@ def hierarchical_chunk_and_print(doc: DoclingDocument, expand_context: bool = Fa
 
     if output_dir is None:
         output_dir = Path.cwd() / "parsed_output"
-    _save_chunks_to_json(unique_chunks, doc, filename="hierarchical_chunks.json", context_flag=expand_context, output_dir=output_dir)
+    return _save_chunks_to_json(unique_chunks, doc, filename="hierarchical_chunks.json", context_flag=expand_context, output_dir=output_dir)
 
 
-def hybrid_chunk_and_print(doc: DoclingDocument, max_tokens: int = 400, output_dir: Path | None = None) -> None:
+def hybrid_chunk_and_print(doc: DoclingDocument, max_tokens: int = 400, output_dir: Path | None = None) -> ChunkCollection:
     """
     Split the document using token-size and structural thresholds.
     Enriches text blocks by auto-prepending parent path headings to the chunk.
@@ -197,9 +206,9 @@ def hybrid_chunk_and_print(doc: DoclingDocument, max_tokens: int = 400, output_d
     
     if output_dir is None:
         output_dir = Path.cwd() / "parsed_output"
-    _save_chunks_to_json(chunk_iterator, doc, filename="hybrid_chunks.json", context_flag=True, output_dir=output_dir)
+    return _save_chunks_to_json(chunk_iterator, doc, filename="hybrid_chunks.json", context_flag=True, output_dir=output_dir)
 
-def line_based_chunk_and_print(doc: DoclingDocument, max_tokens: int = 256, output_dir: Path | None = None) -> None:
+def line_based_chunk_and_print(doc: DoclingDocument, max_tokens: int = 256, output_dir: Path | None = None) -> ChunkCollection:
     """
     Split the document using a line-oriented tokenization workflow.
     Ensures complete sentence lines are preserved together where possible.
@@ -215,4 +224,4 @@ def line_based_chunk_and_print(doc: DoclingDocument, max_tokens: int = 256, outp
     
     if output_dir is None:
         output_dir = Path.cwd() / "parsed_output"
-    _save_chunks_to_json(chunk_iterator, doc, filename="line_chunks.json", context_flag=False, output_dir=output_dir)
+    return _save_chunks_to_json(chunk_iterator, doc, filename="line_chunks.json", context_flag=False, output_dir=output_dir)

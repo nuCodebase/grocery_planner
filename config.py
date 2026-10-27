@@ -20,6 +20,8 @@ class Config:
             os.getenv("PARSED_OUTPUT"), Path("ingestion/parsed_output")
         )
         self.parsed_output.mkdir(exist_ok=True, parents=True)
+        self.chunking_lib = os.getenv("CHUNKING_LIB", "langchain")
+        self.chunking_type = os.getenv("CHUNKING_TYPE", "markdown")
 
     def _load_dotenv(self) -> None:
         if load_dotenv is not None:
@@ -30,3 +32,4 @@ class Config:
         if path.is_absolute():
             return path
         return (self.repo_root / path).resolve()
+    

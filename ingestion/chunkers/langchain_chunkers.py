@@ -7,11 +7,11 @@ from langchain_text_splitters import (
     RecursiveCharacterTextSplitter
 )
 
-# Add this new import to your import block
 from langchain_experimental.text_splitter import SemanticChunker
 
 # Alternatively for local offline runs, uncomment below:
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from ingestion.models import Chunk, ChunkCollection, chunks_to_dict
 
 # This module expects callers to pass `output_dir: Path` (where parsed.md lives)
 def _ensure_output_dir(output_dir: Path | None) -> Path:
@@ -21,7 +21,7 @@ def _ensure_output_dir(output_dir: Path | None) -> Path:
     return output_dir
 
 
-def langchain_markdown_header_chunk(max_tokens: int = 500, output_dir: Path | None = None) -> None:
+def langchain_markdown_header_chunk(max_tokens: int = 500, output_dir: Path | None = None) -> ChunkCollection:
     """
     Strategy 1: Structural Markdown Chunker
     Splits the document at physical heading changes (#, ##, ###) so that sections
@@ -33,7 +33,7 @@ def langchain_markdown_header_chunk(max_tokens: int = 500, output_dir: Path | No
     markdown_file = output_dir / "parsed.md"
     if not markdown_file.exists():
         print(f"[ERROR] Required file {markdown_file} missing. Run Docling exports first.")
-        return
+        return {}
 
     with open(markdown_file, "r", encoding="utf-8") as f:
         md_text = f.read()
@@ -58,27 +58,30 @@ def langchain_markdown_header_chunk(max_tokens: int = 500, output_dir: Path | No
     final_docs = text_splitter.split_documents(md_header_splits)
     
     # 4. Save to JSON using your sequential schema
-    chunks_dict = {}
+    chunks: ChunkCollection = {}
     for i, doc in enumerate(final_docs):
         chunk_key = f"chunk_{i+1}"
-        chunks_dict[chunk_key] = {
-            "text": doc.page_content,
-            "metadata": {
+        chunks[chunk_key] = Chunk(
+            id=chunk_key,
+            text=doc.page_content,
+            metadata={
                 "source_framework": "langchain_markdown",
                 **doc.metadata  # Automatically carries over inherited header paths!
-            }
-        }
+            },
+        )
         print(f"\n[{chunk_key.upper()}] | Inherited Context: {doc.metadata}")
         print(f"  Content snippet:\n{doc.page_content[:100]}...")
         print("-" * 60)
 
     output_path = output_dir / "lc_markdown_chunks.json"
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(chunks_dict, f, indent=2, ensure_ascii=False)
+        json.dump(chunks_to_dict(chunks), f, indent=2, ensure_ascii=False)
     print(f"[SUCCESS] Saved LangChain Markdown chunks to: {output_path}")
 
+    return chunks
 
-def langchain_recursive_chunk(chunk_size_tokens: int = 300, chunk_overlap_tokens: int = 30, output_dir: Path | None = None) -> None:
+
+def langchain_recursive_chunk(chunk_size_tokens: int = 300, chunk_overlap_tokens: int = 30, output_dir: Path | None = None) -> ChunkCollection:
     """
     Strategy 2: Standard Semantic Recursive Chunker
     Uses an ordered list of delimiters ("\n\n", "\n", " ", "") to split text.
@@ -98,29 +101,31 @@ def langchain_recursive_chunk(chunk_size_tokens: int = 300, chunk_overlap_tokens
         length_function=len,
     )
     
-    chunks = splitter.split_text(text_content)
-    
-    chunks_dict = {}
-    for i, chunk in enumerate(chunks):
+    text_chunks = splitter.split_text(text_content)
+
+    chunks: ChunkCollection = {}
+    for i, chunk_text in enumerate(text_chunks):
         chunk_key = f"chunk_{i+1}"
-        chunks_dict[chunk_key] = {
-            "text": chunk,
-            "metadata": {
+        chunks[chunk_key] = Chunk(
+            id=chunk_key,
+            text=chunk_text,
+            metadata={
                 "source_framework": "langchain_recursive",
-                "chunk_size_characters": len(chunk)
-            }
-        }
-        print(f"\n[{chunk_key.upper()}] | Char Length: {len(chunk)}")
-        print(f"  Content snippet:\n{chunk[:100]}...")
+                "chunk_size_characters": len(chunk_text),
+            },
+        )
+        print(f"\n[{chunk_key.upper()}] | Char Length: {len(chunk_text)}")
+        print(f"  Content snippet:\n{chunk_text[:100]}...")
         print("-" * 60)
 
     output_path = output_dir / "lc_recursive_chunks.json"
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(chunks_dict, f, indent=2, ensure_ascii=False)
+        json.dump(chunks_to_dict(chunks), f, indent=2, ensure_ascii=False)
     print(f"[SUCCESS] Saved LangChain Recursive chunks to: {output_path}")
+    return chunks
 
 
-def langchain_parent_child_simulation_chunk(output_dir: Path | None = None) -> None:
+def langchain_parent_child_simulation_chunk(output_dir: Path | None = None) -> ChunkCollection:
     """
     Strategy 3: Multi-Vector / Parent-Child Mapping Simulation
     Creates large "Parent" context blocks (e.g., full sections) for LLM synthesis,
@@ -139,32 +144,34 @@ def langchain_parent_child_simulation_chunk(output_dir: Path | None = None) -> N
     
     parent_docs = parent_splitter.split_text(text_content)
     
-    chunks_dict = {}
+    chunks: ChunkCollection = {}
     global_counter = 1
     
     for p_id, parent_text in enumerate(parent_docs):
         # Generate smaller sub-chunks from the parent text
         child_sub_chunks = child_splitter.split_text(parent_text)
         
-        for c_id, child_text in enumerate(child_sub_chunks):
+        for child_text in child_sub_chunks:
             chunk_key = f"chunk_{global_counter}"
-            chunks_dict[chunk_key] = {
-                "text": child_text,  # Sent to vector database for embedding search
-                "metadata": {
+            chunks[chunk_key] = Chunk(
+                id=chunk_key,
+                text=child_text,
+                metadata={
                     "source_framework": "langchain_parent_child",
                     "parent_id": f"parent_{p_id+1}",
                     "parent_full_context": parent_text  # Returned to LLM window when child matches
-                }
-            }
+                },
+            )
             global_counter += 1
             
     output_path = output_dir / "lc_parent_child_chunks.json"
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(chunks_dict, f, indent=2, ensure_ascii=False)
+        json.dump(chunks_to_dict(chunks), f, indent=2, ensure_ascii=False)
     print(f"[SUCCESS] Saved LangChain Parent-Child simulation chunks to: {output_path}")
+    return chunks
 
 
-def langchain_semantic_chunk(output_dir: Path | None = None) -> None:
+def langchain_semantic_chunk(output_dir: Path | None = None) -> ChunkCollection:
     """
     Strategy 4: Embedding-Distance Semantic Chunker
     Analyzes sentence-by-sentence embeddings and creates boundaries 
@@ -176,7 +183,7 @@ def langchain_semantic_chunk(output_dir: Path | None = None) -> None:
     
     if not markdown_file.exists():
         print(f"[ERROR] Required file {markdown_file} missing. Run Docling exports first.")
-        return
+        return {}
 
     with open(markdown_file, "r", encoding="utf-8") as f:
         text_content = f.read()
@@ -200,22 +207,24 @@ def langchain_semantic_chunk(output_dir: Path | None = None) -> None:
     semantic_docs = splitter.create_documents([text_content])
 
     # 4. Save to JSON using your sequential schema
-    chunks_dict = {}
+    chunks: ChunkCollection = {}
     for i, doc in enumerate(semantic_docs):
         chunk_key = f"chunk_{i+1}"
-        chunks_dict[chunk_key] = {
-            "text": doc.page_content,
-            "metadata": {
+        chunks[chunk_key] = Chunk(
+            id=chunk_key,
+            text=doc.page_content,
+            metadata={
                 "source_framework": "langchain_semantic",
-                "character_length": len(doc.page_content)
-            }
-        }
+                "character_length": len(doc.page_content),
+            },
+        )
         print(f"\n[{chunk_key.upper()}] | Size: {len(doc.page_content)} characters")
         print(f"  Content snippet:\n{doc.page_content[:120]}...")
         print("-" * 60)
 
     output_path = output_dir / "lc_semantic_chunks.json"
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(chunks_dict, f, indent=2, ensure_ascii=False)
+        json.dump(chunks_to_dict(chunks), f, indent=2, ensure_ascii=False)
         
     print(f"[SUCCESS] Saved LangChain Semantic chunks to: {output_path}")
+    return chunks
